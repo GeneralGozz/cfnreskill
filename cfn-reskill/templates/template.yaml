@@ -1,0 +1,295 @@
+Parameters:
+  EC2InstanceType:
+    Type: String
+    AllowedValues:
+      - t2.micro
+    Description: EC2 Instance Type... t2.micro, m1.small, m1.large, etc...
+  EC2ImageId:
+    Type: String
+    Description: The id of the AMI to use
+  VPCCidrBlock:
+    Type: String
+    Description: The primary IPv4 CIDR block for the VPC
+  PublicSubnet1CidrBlock:
+    Type: String
+    Description: The IPv4 CIDR block assigned to the public subnet 1
+  PublicSubnet2CidrBlock:
+    Type: String
+    Description: The IPv4 CIDR block assigned to the public subnet 2
+  PrivateSubnet1CidrBlock:
+    Type: String
+    Description: The IPv4 CIDR block assigned to private subnet 1
+  PrivateSubnet2CidrBlock:
+    Type: String
+    Description: The IPv4 CIDR block assigned to the private subnet 2
+  Subnet1AZ:
+    Type: String
+    Description: The Availability Zone of subnet 1
+  Subnet2AZ:
+    Type: String
+    Description: The Availability Zone of subnet 2
+  Env:
+    Type: String
+    Description: Environment for resources stack
+
+Resources:
+  DKsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EC2InboundAccess
+      SecurityGroupIngress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref DKsVPC
+
+  DKsVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPCCidrBlock
+      EnableDnsHostnames: True
+      EnableDnsSupport: True
+  DKsIGW:
+    Type: AWS::EC2::InternetGateway
+  DKsVPCGatewayAttach:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref DKsIGW
+      VpcId: !Ref DKsVPC
+
+  DKsELB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      SecurityGroups: [!GetAtt DKsSecurityGroup.GroupId]
+      Subnets:
+        - !Ref DKsPublicSubnet1
+        - !Ref DKsPublicSubnet2
+  DKsTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Protocol: HTTP
+      Port: 80
+      Targets:
+        - Id: !Ref DKsInstance1
+        - Id: !Ref DKsInstance2
+      VpcId: !Ref DKsVPC
+  DKsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref DKsTargetGroup
+      LoadBalancerArn: !Ref DKsELB
+      Port: 80
+      Protocol: HTTP
+
+  DKsPublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref PublicSubnet1CidrBlock
+      AvailabilityZone: !Ref Subnet1AZ
+      VpcId: !Ref DKsVPC
+  DKsPublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref PublicSubnet2CidrBlock
+      AvailabilityZone: !Ref Subnet2AZ
+      VpcId: !Ref DKsVPC
+  DKsRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DKsVPC
+  DKsRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref DKsIGW
+      RouteTableId: !Ref DKsRouteTable1
+  DKsSubnetRTAssoc1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: !Ref DKsRouteTable1
+      SubnetId: !Ref DKsPublicSubnet1
+  DKsSubnetRTAssoc2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: !Ref DKsRouteTable1
+      SubnetId: !Ref DKsPublicSubnet2
+
+  DKsPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref PrivateSubnet1CidrBlock
+      AvailabilityZone: !Ref Subnet1AZ
+      VpcId: !Ref DKsVPC
+  DKsPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref PrivateSubnet2CidrBlock
+      AvailabilityZone: !Ref Subnet2AZ
+      VpcId: !Ref DKsVPC
+
+  DKsPrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DKsVPC
+  DKsPrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DKsVPC
+  DKsPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      RouteTableId: !Ref DKsPrivateRouteTable1
+      NatGatewayId: !Ref DKsNatGateway1
+  DKsPrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      RouteTableId: !Ref DKsPrivateRouteTable2
+      NatGatewayId: !Ref DKsNatGateway2
+  DKsPrivateSubnetRTAssoc1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref DKsPrivateRouteTable1
+      SubnetId: !Ref DKsPrivateSubnet1
+  DKsPrivateSubnetRTAssoc2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref DKsPrivateRouteTable2
+      SubnetId: !Ref DKsPrivateSubnet2
+
+  DKsNatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt DKsEIP1.AllocationId
+      SubnetId: !Ref DKsPublicSubnet1
+  DKsNatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt DKsEIP2.AllocationId
+      SubnetId: !Ref DKsPublicSubnet2
+  DKsEIP1:
+    Type: AWS::EC2::EIP
+  DKsEIP2:
+    Type: AWS::EC2::EIP
+
+  DKsInstance1:
+    Type: AWS::EC2::Instance
+    DependsOn: DKsVPCGatewayAttach
+    Properties:
+      ImageId: !Ref EC2ImageId
+      InstanceType: !Ref EC2InstanceType
+      Tags:
+        - Key: "Name"
+          Value: !Join [ " ", [IML Bootcamp,!Ref Env,EC2 Instance (1)]]
+      KeyName: DKAdminKP
+      SecurityGroupIds:
+        - !GetAtt DKsSecurityGroup.GroupId
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            yum update -y aws-cfn-bootstrap
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource DKsInstance1 --configsets configs --region ${AWS::Region}
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource DKsInstance1 --region ${AWS::Region}
+      SubnetId: !Ref DKsPrivateSubnet1
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          configs:
+            - "config-webapp"
+        config-webapp:
+          packages:
+            yum:
+              httpd: []
+              php: []
+          files:
+            /var/www/html/index.php:
+              content: !Join [ " ", ["<?php print \"Please allow me to introduce myself, Im a man of wealth and taste. Ive been around for long, long years. Stole million mans soul and faith.", !Ref Env,"\"; ?>"]]
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.DKsInstance1.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource DKsInstance1 --configsets configs --region ${AWS::Region}
+                runas=root
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackName}
+                interval=1
+                region=${AWS::Region}
+          services:
+            sysvinit:
+              httpd:
+                enabled: True
+                ensureRunning: True
+              cfn-hup:
+                enabled: True
+                ensureRunning: True
+                files:
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+                  - /etc/cfn/cfn-hup.conf
+  DKsInstance2:
+    Type: AWS::EC2::Instance
+    DependsOn: DKsVPCGatewayAttach
+    Properties:
+      ImageId: !Ref EC2ImageId
+      InstanceType: !Ref EC2InstanceType
+      Tags:
+        - Key: "Name"
+          Value: !Join [ " ", [IML Bootcamp,!Ref Env,EC2 Instance (2)]]
+      KeyName: DKAdminKP
+      SecurityGroupIds:
+        - !GetAtt DKsSecurityGroup.GroupId
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            yum update -y aws-cfn-bootstrap
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource DKsInstance2 --configsets configs --region ${AWS::Region}
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource DKsInstance2 --region ${AWS::Region}
+      SubnetId: !Ref DKsPrivateSubnet2
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          configs:
+            - "config-webapp"
+        config-webapp:
+          packages:
+            yum:
+              httpd: []
+              php: []
+          files:
+            /var/www/html/index.php:
+              content: !Sub |
+                <?php print "I was around when Jesus Christ had his moment of doubt 'n pain. Made damn sure that Pilate washed his hands and sealed his fate.  ${Env}"; ?>
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.DKsInstance2.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource DKsInstance2 --configsets configs --region ${AWS::Region}
+                runas=root
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackName}
+                interval=1
+                region=${AWS::Region}
+          services:
+            sysvinit:
+              httpd:
+                enabled: True
+                ensureRunning: True
+              cfn-hup:
+                enabled: True
+                ensureRunning: True
+                files:
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+                  - /etc/cfn/cfn-hup.conf            
+Outputs:
+  ELBDnsName:
+    Description: ELB DNS Path
+    Value: !GetAtt DKsELB.DNSName
